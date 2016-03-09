@@ -1,0 +1,124 @@
+---
+title: "GH Slice Sampling"
+author: "Jyotishka Datta"
+date: "Tuesday, March 07, 2016"
+output: html_document
+---
+
+## Sampling from Gauss Hypergeometric Posterior 
+
+This document outlines possible strategies for sampling from the Gauss Hypergeometric distributionin the context of inference for a high dimensional sparse Poisson mean as decribed in the following paper: 
+
+[*Inference on High-Dimensional Sparse Count Data*](http://arxiv.org/abs/1510.04320): Datta, J and Dunson, D. (2016+)   
+
+### Exponential Slice Sampling 
+
+The first strategy is to use the exponential slice sampling for drawing samples from the Gauss Hypergeometric distribution for fixed values of the hyper-parameters $\gamma$ and $\tau^2$. As Datta and Dunson (2016) noted, the $\gamma$ paarmeter acts as a threshold to separate the low counts from the high counts that are true signals, and the $\tau^2$ acts as a global shrinkage parameter that adjusts to the overall sparsity in the data. 
+
+The Gauss-Hypergeometric prior is pseudo-conjugate in the sense that it produces a Gauss-Hypergeometric posterior when combined with a negative binomial likelihood. Recall that a negative binomial likelihood results when we put a Gamma prior on a Poisson rate parameter. 
+
+Our hierarchical model is: 
+$$ 
+Y_i \sim \mbox{NegBin}(\alpha, 1-\kappa_i) \equiv p(y_i | \kappa_i, \alpha) \propto (1-\kappa_i)^{y_i} \kappa_i^{\alpha} \\
+p(\kappa_i | \tau^2, \gamma) \propto \kappa_i^{a-1} (1-\kappa_i)^{b-1} (1+\kappa_i (\tau^2-1))^{-\gamma}
+$$
+
+For modelling sparse count data, we recommend $a = b = \frac{1}{2}$, which results in the posterior: 
+$$
+p(\kappa_i | y_i, \gamma, \tau^2, \alpha) \propto \kappa_i^{\alpha-1/2} (1-\kappa_i)^{y_i - 1/2} (1+\kappa_i (\tau^2-1))^{-\gamma}
+$$
+
+We use the Laplace transformation to write: 
+$$
+\{ 1 + \kappa_i (\tau^2-1) \}^{-\gamma} \propto \int_0^{\infty} \frac{\exp[\{(1 + \kappa_i (\tau^2-1))\}\omega_i] \omega_i^{\gamma-1}}{\Gamma(\gamma)} d \omega_i 
+$$
+We have an augmented joint posterior: 
+$$
+p(\tilde{\kappa}, \tilde{\omega} | \tau^2, \gamma, \alpha) \propto \mathrm{e}^{-\sum (1-(1-\tau^2)\kappa_i)\omega_i} \prod_{i=1}^{n} \kappa_i^{\alpha-1/2} (1-\kappa_i)^{y_i - 1/2} \omega_i^{\gamma-i}
+$$
+Using another set of slice variables $\tilde{u} = (u_1, \ldots, u_n)$ on the set $\{ 0 \leq u_i \leq exp(\kappa_i \omega_i (1-\tau^2)) \}$, we have a joint posterior: 
+$$
+p(\tilde{\kappa}, \tilde{\omega}, \tilde{u} | \tau^2, \gamma, \alpha) \propto \mathrm{e}^{-\sum \omega_i} \prod_{i=1}^{n} \kappa_i^{\alpha-1/2} (1-\kappa_i)^{y_i - 1/2} I\{ 0 \leq u_i \leq exp(\kappa_i \omega_i (1-\tau^2)) \} \ \omega_i^{\gamma-i}
+$$
+Now, all the conditionals are available in the closed form: 
+$$
+\kappa_i \sim \mathrm{Beta}(\alpha+1/2, y+1/2) I\left(0 \leq \kappa_i \leq \frac{\log(u_i)}{\omega_i(1-\tau^2)} \right) \\
+\omega_i \sim \mathrm{Gamma}(\gamma, 1-(1-\tau^2)\kappa_i) \\
+u_i \sim \mathrm{Unif}(0, exp(\kappa_i \omega_i (1-\tau^2)))
+$$
+
+We use the R package "truncdist" for drawing from a truncated distribution: 
+
+```{r, warning = FALSE, message = FALSE,strip.white= TRUE, tidy = TRUE}
+if("truncdist" %in% rownames(installed.packages()) == FALSE) {install.packages("truncdist",repos="http://cran.us.r-project.org")}
+library(truncdist)
+## sampling from gauss hypergeometric posterior for given tau-sq and gamma
+rGaussHG <- function(r,y,gamma,t2,alpha)
+{
+  p = length(y)
+  k = rep(1/4,p)
+  K = matrix(0,p,r)
+  Omega = matrix(0,p,r)
+  U = matrix(0,p,r)
+  TH = matrix(0,p,r)
+  
+  for ( i in 1:r )
+  {
+    omega = rgamma(p,shape=gamma,rate=k*(t2-1)+1) 
+    u = runif(p,0,exp(omega*k*(1-t2))) 
+    s1 = rep(alpha+1/2,p) 
+    s2 = y+1/2
+    if (t2<1)
+    { 
+      lb = pmax(log(u)/(omega*(1-t2)),0)
+      ub = rep(1,p)
+    }
+    else
+    {
+      ub = pmin(log(1/u)/(omega*(t2-1)),1)
+      lb = rep(0,p)
+    }
+    k = rtrunc(p,"beta",a = lb, b = ub, shape1=s1,shape2=s2)
+    theta = rgamma(p,y+1,1/(1-k))
+    K[,i] = k
+    Omega[,i] = omega
+    U[,i] = u
+    TH[,i] = theta
+  }
+  list(K=K,U=U,TH=TH)
+}
+```
+We can also evaluate the posterior density since we know the normalizing constant and validate if the samples drawn using the sampling scheme above are indeed following the Gauss Hypergeometric distribution. 
+
+```{r}
+library(BMS)
+vf21hyper = Vectorize(f21hyper)
+dGaussHG <- function(x,a,b,c,z){
+C = beta(a,b)*vf21hyper(c,a,a+b,-z)
+den = x^(a-1)*(1-x)^(b-1)*(1+z*x)^(-c)
+return(den/C)
+}
+```
+
+The function "rGaussHG" returns the samples drawn from the posterior and the function "dGaussHG" returns the density values for a chosen value or sequence of $\kappa_i$'s. 
+```{r, fig.align = 'center',fig.width=6}
+kappa.vals = seq(0.01,1,length.out = 10000)
+tau.sq = 0.05; a = 1/2; b = 1/2; z = tau.sq - 1
+y.set = c(2,5); gamma.set = c(2,5)
+par(oma=c(0,0,2,0))
+par(mfrow=c(2,2))
+for(i in 1:2){
+  for (j in 1:2){
+    y = y.set[i]; gamma = gamma.set[j]
+    dpost <- dGaussHG(kappa.vals,a+1/2,y+b,gamma,z)
+    ans = rGaussHG(10000,y,gamma,tau.sq,a)
+    rpost <- ans$K
+    ymax = max(dpost)
+    d_rpost<- density(rpost)
+    plot(d_rpost, col="red",lwd=2, ylim=c(0,ymax+0.5), xlim=c(0,1), 
+         xlab = expression(kappa) ,ylab = "density", main = paste("y =", y, ", gamma =", gamma, sep =" "))
+    lines(kappa.vals,dpost,type="l",col="blue",lwd=2)
+  }
+}
+title(main = "Comparison of the kernel density estimate from posterior samples and true density",outer=T)
+```
