@@ -1,7 +1,7 @@
 ---
 title: "GH Slice Sampling"
 author: "Jyotishka Datta"
-date: "Tuesday, March 07, 2016"
+date: "Tuesday, March 10, 2016"
 output: html_document
 ---
 
@@ -101,7 +101,7 @@ return(den/C)
 ```
 
 The function "rGaussHG" returns the samples drawn from the posterior and the function "dGaussHG" returns the density values for a chosen value or sequence of $\kappa_i$'s. 
-```{r, fig.align = 'center',fig.width=6}
+```{r, fig.align = 'center',fig.width=8}
 kappa.vals = seq(0.01,1,length.out = 10000)
 tau.sq = 0.05; a = 1/2; b = 1/2; z = tau.sq - 1
 y.set = c(2,5); gamma.set = c(2,5)
